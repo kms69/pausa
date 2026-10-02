@@ -72,6 +72,7 @@ const (
 	EventAutoPaused EventKind = "autoPaused" // busy signal triggered pause
 	EventAutoResume EventKind = "autoResume" // busy signal cleared
 	EventNatural    EventKind = "natural"    // a break was satisfied by idle time
+	EventReset      EventKind = "reset"      // schedule was reset by the user
 )
 
 // Event is published on the scheduler's Events channel.

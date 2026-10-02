@@ -875,3 +875,100 @@ func TestSnapshotReportsShortsUntilLong(t *testing.T) {
 		t.Errorf("after one short, ShortsUntilLong=%d, want 2", got)
 	}
 }
+
+// ---------- Working-hours / reset regression tests ----------
+
+func TestNextBreakAtDefersOutsideWindow(t *testing.T) {
+	h := newHarnessAt(t, time.Date(2025, 6, 4, 16, 59, 58, 0, time.Local), whConfig)
+	now := h.clk.Now()
+	got := h.sched.nextBreakAt(now, 3*time.Second)
+	want := time.Date(2025, 6, 5, 9, 0, 0, 0, time.Local)
+	if !got.Equal(want) {
+		t.Errorf("nextBreakAt=%v, want %v (deferred past closing)", got, want)
+	}
+
+	inside := time.Date(2025, 6, 4, 10, 0, 0, 0, time.Local)
+	if got := h.sched.nextBreakAt(inside, 3*time.Second); !got.Equal(inside.Add(3 * time.Second)) {
+		t.Errorf("inside window nextBreakAt=%v, want %v", got, inside.Add(3*time.Second))
+	}
+}
+
+func TestPostponeHonorsWorkingHours(t *testing.T) {
+	h := newHarnessAt(t, time.Date(2025, 6, 4, 22, 0, 0, 0, time.Local), whConfig)
+	h.sched.PostponeBreak()
+	h.drain()
+	want := time.Date(2025, 6, 5, 9, 0, 0, 0, time.Local)
+	snap := h.sched.Snapshot()
+	if !snap.NextBreakAt.Equal(want) {
+		t.Errorf("after postpone nextBreakAt=%v, want %v", snap.NextBreakAt, want)
+	}
+	if snap.Stats.BreaksPostponed != 1 {
+		t.Errorf("BreaksPostponed=%d, want 1", snap.Stats.BreaksPostponed)
+	}
+}
+
+func TestPostponeDefersWhenLandingOutsideWindow(t *testing.T) {
+	// 16:59:58 + 3s postpone would land at 17:00:01, after closing.
+	h := newHarnessAt(t, time.Date(2025, 6, 4, 16, 59, 58, 0, time.Local), whConfig)
+	h.sched.PostponeBreak()
+	h.drain()
+	want := time.Date(2025, 6, 5, 9, 0, 0, 0, time.Local)
+	if got := h.sched.Snapshot().NextBreakAt; !got.Equal(want) {
+		t.Errorf("after postpone nextBreakAt=%v, want %v", got, want)
+	}
+}
+
+func TestPostponeWhileManuallyPausedIsNoOp(t *testing.T) {
+	h := newHarness(t)
+	h.sched.Pause()
+	h.drain()
+	h.sched.PostponeBreak()
+	h.drain()
+	snap := h.sched.Snapshot()
+	if snap.Phase != PhasePaused {
+		t.Errorf("phase=%s, want paused (postpone must not re-arm)", snap.Phase)
+	}
+	if snap.Stats.BreaksPostponed != 0 {
+		t.Errorf("BreaksPostponed=%d, want 0", snap.Stats.BreaksPostponed)
+	}
+	h.clearEvents()
+	h.advance(60 * time.Second)
+	if h.hasKind(EventBreakStart) {
+		t.Errorf("break fired while manually paused: %v", h.kinds())
+	}
+}
+
+func TestResetClearsAutoPauseState(t *testing.T) {
+	h := newHarness(t)
+	h.idle.d = 3 * time.Minute
+	h.advance(BusyPollInterval) // idle auto-pause
+	if h.sched.Snapshot().Phase != PhaseAutoPaused {
+		t.Fatalf("setup: expected auto-paused, got %s", h.sched.Snapshot().Phase)
+	}
+	h.sched.Reset()
+	h.drain()
+	snap := h.sched.Snapshot()
+	if snap.AutoPauseReason != "" {
+		t.Errorf("AutoPauseReason=%q, want empty after reset", snap.AutoPauseReason)
+	}
+	if snap.Phase != PhaseScheduled {
+		t.Errorf("phase=%s, want scheduled after reset", snap.Phase)
+	}
+}
+
+func TestResetFromOnBreakEmitsResetEvent(t *testing.T) {
+	h := newHarness(t)
+	h.advance(10 * time.Second) // break starts
+	if h.sched.Snapshot().Phase != PhaseOnBreak {
+		t.Fatalf("setup: expected on break, got %s", h.sched.Snapshot().Phase)
+	}
+	h.clearEvents()
+	h.sched.Reset()
+	h.drain()
+	if !h.hasKind(EventReset) {
+		t.Errorf("expected EventReset in %v", h.kinds())
+	}
+	if got := h.sched.Snapshot().Phase; got != PhaseScheduled {
+		t.Errorf("phase=%s, want scheduled after reset", got)
+	}
+}

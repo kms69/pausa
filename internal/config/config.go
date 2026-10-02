@@ -188,7 +188,17 @@ func (c *Config) Validate() bool {
 	clampInt(&c.WorkingHours.StartMinute, 0, 24*60-1, d.WorkingHours.StartMinute)
 	clampInt(&c.WorkingHours.EndMinute, 0, 24*60, d.WorkingHours.EndMinute)
 	if c.WorkingHours.EndMinute <= c.WorkingHours.StartMinute {
-		c.WorkingHours.EndMinute = d.WorkingHours.EndMinute
+		// The window is empty or inverted. Repair it to a default-length
+		// window anchored at the start, rolling the start back if that
+		// would run past midnight. IsWorkingNow requires End > Start, so
+		// leaving the window inverted would silently disable every break.
+		window := d.WorkingHours.EndMinute - d.WorkingHours.StartMinute
+		if end := c.WorkingHours.StartMinute + window; end <= 24*60 {
+			c.WorkingHours.EndMinute = end
+		} else {
+			c.WorkingHours.StartMinute = 24*60 - window
+			c.WorkingHours.EndMinute = 24 * 60
+		}
 		changed = true
 	}
 
