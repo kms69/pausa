@@ -1,3 +1,12 @@
+## [1.0.5](https://github.com/yuseferi/pausa/compare/v1.0.4...v1.0.5) (2026-10-02)
+
+### Bug Fixes
+
+* address PR review feedback ([8a97fc3](https://github.com/yuseferi/pausa/commit/8a97fc3fe19a3b403201be93b4ff0863580061f1))
+* correct working-hours scheduling and config lifecycle bugs ([5f2eec5](https://github.com/yuseferi/pausa/commit/5f2eec5c296855c8b908d03c6d39c9ad3e57f178))
+* harden break lifecycle and move busy sampling off the actor ([d4d5e72](https://github.com/yuseferi/pausa/commit/d4d5e7261563978c2e4b8e884a8b3e8d222497ec))
+* make frontend resilient to empty config and stale listeners ([8108abe](https://github.com/yuseferi/pausa/commit/8108abea60fa4bc287003848f990650f47c0c7c6))
+
 ## [1.0.4](https://github.com/yuseferi/pausa/compare/v1.0.3...v1.0.4) (2026-08-31)
 
 ### Bug Fixes
