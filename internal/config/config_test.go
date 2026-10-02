@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -125,5 +126,75 @@ func TestIsWorkingNow(t *testing.T) {
 	c.WorkingHours.Enabled = false
 	if !c.IsWorkingNow(sun) {
 		t.Error("expected always-working when disabled")
+	}
+}
+
+func TestValidateRepairsInvertedWorkingHours(t *testing.T) {
+	c := Default()
+	c.WorkingHours.Enabled = true
+	c.WorkingHours.StartMinute = 20 * 60 // 20:00
+	c.WorkingHours.EndMinute = 0         // midnight
+	if !c.Validate() {
+		t.Fatal("Validate should report the repaired window")
+	}
+	if c.WorkingHours.EndMinute <= c.WorkingHours.StartMinute {
+		t.Fatalf("window still inverted: start=%d end=%d",
+			c.WorkingHours.StartMinute, c.WorkingHours.EndMinute)
+	}
+	// A time inside the repaired window must be reported as working;
+	// before the fix this could never be true and all breaks stopped.
+	inside := time.Date(2024, 1, 3, c.WorkingHours.StartMinute/60, 0, 0, 0, time.Local)
+	if !c.IsWorkingNow(inside) {
+		t.Errorf("expected working at start of repaired window")
+	}
+}
+
+func TestStoreOpenReadErrorFallsBackToDefaults(t *testing.T) {
+	// Passing a directory makes os.ReadFile fail with a non-NotExist error.
+	s, err := Open(t.TempDir())
+	if s == nil {
+		t.Fatal("Open returned a nil store on read error; callers would panic")
+	}
+	if err == nil {
+		t.Fatal("expected a read error to be reported")
+	}
+	if got := s.Get().Schedule.ShortInterval; got != Default().Schedule.ShortInterval {
+		t.Errorf("store did not fall back to defaults: %v", got)
+	}
+}
+
+func TestStoreConcurrentSetAndClose(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "cfg.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				c := s.Get()
+				c.Display.Theme = "dark"
+				_, _ = s.Set(c)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.Close()
+	}()
+	wg.Wait()
+
+	// Subscribing after Close must yield an already-closed channel.
+	ch := s.Subscribe()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected closed subscriber channel after Close")
+		}
+	case <-time.After(time.Second):
+		t.Error("subscriber channel was not closed after Close")
 	}
 }

@@ -32,6 +32,25 @@ const safe = (name, fn) => async (...args) => {
   }
 }
 
+// Wails' EventsOff removes *every* listener for an event, so we keep our own
+// registry per event. Each api.on call gets a unique registration token so a
+// disposer removes only its own registration — even when the same handler is
+// registered twice, or after api.off() and a later re-registration.
+const listeners = new Map() // event -> Set<registration>
+const subscribed = new Set()
+
+function dispatch(event, ...args) {
+  const set = listeners.get(event)
+  if (!set) return
+  for (const reg of [...set]) {
+    try {
+      reg.handler(...args)
+    } catch (err) {
+      console.error(`api.on(${event}) handler failed:`, err)
+    }
+  }
+}
+
 export const api = {
   // Read
   getConfig:        safe('getConfig', GetConfig),
@@ -56,8 +75,31 @@ export const api = {
 
   // Events
   on(event, handler) {
-    EventsOn(event, handler)
-    return () => EventsOff(event)
+    let set = listeners.get(event)
+    if (!set) {
+      set = new Set()
+      listeners.set(event, set)
+    }
+    // A unique token per api.on call, so the disposer can only ever remove
+    // its own registration.
+    const reg = { handler }
+    set.add(reg)
+    if (!subscribed.has(event)) {
+      subscribed.add(event)
+      EventsOn(event, (...args) => dispatch(event, ...args))
+    }
+    return () => {
+      const s = listeners.get(event)
+      if (!s || !s.delete(reg)) return
+      if (s.size === 0) {
+        listeners.delete(event)
+        subscribed.delete(event)
+        EventsOff(event)
+      }
+    }
   },
-  off(event) { EventsOff(event) },
+  off(event) {
+    listeners.delete(event)
+    if (subscribed.delete(event)) EventsOff(event)
+  },
 }

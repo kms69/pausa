@@ -10,20 +10,34 @@ export function useCountdown(targetIso) {
 
   let raf = null
   const tick = () => {
+    raf = null
     if (!targetIso.value) {
       seconds.value = 0
-    } else {
-      const ms = new Date(targetIso.value).getTime() - Date.now()
-      seconds.value = Math.max(0, Math.ceil(ms / 1000))
+      return
     }
-    raf = requestAnimationFrame(tick)
+    const ms = new Date(targetIso.value).getTime() - Date.now()
+    seconds.value = Math.max(0, Math.ceil(ms / 1000))
+    // Stop the frame loop once the target has passed; it restarts when the
+    // target changes. Keeping it alive forever burns a callback every frame.
+    if (seconds.value > 0) {
+      raf = requestAnimationFrame(tick)
+    }
   }
 
-  const start = () => { if (raf == null) raf = requestAnimationFrame(tick) }
   const stop  = () => { if (raf != null) { cancelAnimationFrame(raf); raf = null } }
+  const start = () => {
+    stop()
+    if (targetIso.value) {
+      raf = requestAnimationFrame(tick)
+    } else {
+      // Clearing the target must also clear the displayed value; otherwise
+      // it keeps the last positive countdown.
+      seconds.value = 0
+    }
+  }
 
   watch(targetIso, () => {
-    stop(); start()
+    start()
   }, { immediate: true })
 
   onUnmounted(stop)

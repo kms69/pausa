@@ -19,6 +19,7 @@ type Store struct {
 	cfg         Config
 	exists      bool
 	subscribers []chan Config
+	closed      bool
 }
 
 // Open loads (or creates) the store at the given path. Missing or invalid
@@ -32,7 +33,10 @@ func Open(path string) (*Store, error) {
 		// First run: leave defaults, mark not-yet-saved.
 		return s, nil
 	case err != nil:
-		return nil, fmt.Errorf("read config: %w", err)
+		// Any other read failure (permissions, I/O error, path is a
+		// directory) must still yield a usable defaults store so callers
+		// never nil-dereference at startup.
+		return s, fmt.Errorf("read config (using defaults): %w", err)
 	}
 	var loaded Config
 	if jerr := json.Unmarshal(data, &loaded); jerr != nil {
@@ -70,12 +74,17 @@ func (s *Store) Set(c Config) (Config, error) {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.cfg = c
 	s.exists = true
-	subs := append([]chan Config(nil), s.subscribers...)
-	s.mu.Unlock()
-
-	for _, ch := range subs {
+	if s.closed {
+		// Store was closed concurrently; don't touch subscriber channels.
+		return c, nil
+	}
+	// Send while holding the lock. The sends are non-blocking (default
+	// drops), so this cannot deadlock, and it guarantees Close cannot
+	// close a channel between our snapshot and our send.
+	for _, ch := range s.subscribers {
 		select {
 		case ch <- c:
 		default: // drop if subscriber is slow; latest update will follow
@@ -86,19 +95,28 @@ func (s *Store) Set(c Config) (Config, error) {
 
 // Subscribe returns a channel that receives the latest config every time it
 // changes. The buffer is small (1); use a separate goroutine to drain.
-// The channel is closed when ctx-equivalent cleanup happens via Close.
+// The channel is closed when ctx-equivalent cleanup happens via Close. If
+// the store is already closed, the returned channel is closed immediately.
 func (s *Store) Subscribe() <-chan Config {
-	ch := make(chan Config, 1)
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch := make(chan Config, 1)
+	if s.closed {
+		close(ch)
+		return ch
+	}
 	s.subscribers = append(s.subscribers, ch)
-	s.mu.Unlock()
 	return ch
 }
 
-// Close releases subscriber channels.
+// Close releases subscriber channels. It is idempotent.
 func (s *Store) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
 	for _, ch := range s.subscribers {
 		close(ch)
 	}

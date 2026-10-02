@@ -43,13 +43,13 @@ jobs:
         working-directory: frontend
 
       - name: Build
-        run: go build ./...
+        run: go build ./internal/... .
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./internal/... .
 
       - name: Test
-        run: go test -race ./...
+        run: go test -race ./internal/... .
 
   frontend:
     name: Frontend build
@@ -84,6 +84,10 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+
   cross-compile:
     name: Cross-compile (Linux)
     runs-on: ubuntu-latest
@@ -101,7 +105,7 @@ jobs:
         run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
 
       - name: Build (GOOS=linux, CGO_ENABLED=0)
-        run: GOOS=linux CGO_ENABLED=0 go build ./...
+        run: GOOS=linux CGO_ENABLED=0 go build ./internal/... .
 
   lint:
     name: golangci-lint
@@ -136,3 +140,6 @@ jobs:
         with:
           version: v2.11.4
           install-mode: goinstall
+          # Exclude frontend/node_modules (third-party Go files shipped by npm
+          # packages) from linting.
+          args: ./internal/... .

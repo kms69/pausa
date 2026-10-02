@@ -62,13 +62,13 @@ type BusyState uint8
 func (s BusyState) IsBusy() bool        { return false }
 func (s BusyState) Has(k BusyKind) bool { return false }
 func (s BusyState) String() string      { return "" }
-func CurrentBusyState() BusyState       { return 0 }
 
 type BusySource struct{}
 
 func (BusySource) BusyState() (string, bool)                { return "", false }
 func NewBusySource(mediaDebounce time.Duration) *BusySource { return &BusySource{} }
 func (b *BusySource) SetMediaDebounce(d time.Duration)      {}
+func (b *BusySource) Close()                                {}
 
 type OverlayAction int
 

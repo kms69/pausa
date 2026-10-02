@@ -103,7 +103,7 @@ func (a *App) DomReady(ctx context.Context) {
 		a.setupNotifications()
 		a.setupOverlayHandlers()
 	})
-	wailsruntime.EventsEmit(ctx, "scheduler:hydrate", a.sched.Snapshot())
+	wailsruntime.EventsEmit(ctx, "scheduler:hydrate", a.snapshotPayload())
 }
 
 // Shutdown is invoked when the app quits.
@@ -112,8 +112,11 @@ func (a *App) Shutdown(ctx context.Context) {
 		a.cancelCtx()
 	}
 	a.sched.Stop()
-	if a.status != nil {
-		a.status.Teardown()
+	if sb := a.getStatus(); sb != nil {
+		sb.Teardown()
+	}
+	if a.busy != nil {
+		a.busy.Close()
 	}
 	macos.CloseOverlays()
 	a.cfg.Close()
@@ -152,8 +155,34 @@ func (a *App) SaveConfig(c config.Config) (config.Config, error) {
 	return saved, nil
 }
 
-// GetSnapshot returns the scheduler's current snapshot.
-func (a *App) GetSnapshot() scheduler.Snapshot { return a.sched.Snapshot() }
+// GetSnapshot returns the scheduler's current state, enriched with the info
+// needed to render a break that is already underway when the frontend
+// attaches (e.g. the app reloads mid-break).
+func (a *App) GetSnapshot() SnapshotPayload { return a.snapshotPayload() }
+
+// SnapshotPayload is a scheduler.Snapshot plus the in-progress break details
+// the scheduler itself doesn't carry. Fields of the embedded Snapshot are
+// serialized flat, so JS consumers can treat it exactly like a Snapshot.
+type SnapshotPayload struct {
+	scheduler.Snapshot
+	DurationSeconds int      `json:"durationSeconds,omitempty"`
+	Tip             tips.Tip `json:"tip,omitempty"`
+	BreakKind       string   `json:"breakKind,omitempty"`
+}
+
+// snapshotPayload builds the enriched snapshot for the frontend.
+func (a *App) snapshotPayload() SnapshotPayload {
+	snap := a.sched.Snapshot()
+	p := SnapshotPayload{Snapshot: snap}
+	if snap.Phase == scheduler.PhaseOnBreak {
+		a.mu.RLock()
+		p.DurationSeconds = int(a.currentBreakDur.Seconds())
+		p.Tip = a.currentTip
+		a.mu.RUnlock()
+		p.BreakKind = string(snap.CurrentKind)
+	}
+	return p
+}
 
 // GetTips returns all known exercise tips.
 func (a *App) GetTips() []tips.Tip { return a.tips.All() }
@@ -206,12 +235,24 @@ func (a *App) OpenPreferences() {
 
 // ---------- Internal: status bar ----------
 
+func (a *App) setStatus(sb *macos.StatusBar) {
+	a.mu.Lock()
+	a.status = sb
+	a.mu.Unlock()
+}
+
+func (a *App) getStatus() *macos.StatusBar {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.status
+}
+
 func (a *App) setupStatusBar() {
 	// Use a native vector template icon. This avoids raster/template
 	// rendering glitches (the old gray-square issue) and lets us reflect
 	// running/paused/busy/break states directly in the menu bar.
 	sb := macos.SetupStatusBar("")
-	a.status = sb
+	a.setStatus(sb)
 	sb.SetBuiltinIcon(macos.StatusIconRunning)
 
 	sb.AddDisabled(tagNextBreak, "Loading…")
@@ -234,7 +275,8 @@ func (a *App) setupStatusBar() {
 }
 
 func (a *App) updateStatusBar(snap scheduler.Snapshot) {
-	if a.status == nil {
+	status := a.getStatus()
+	if status == nil {
 		return
 	}
 	cfg := a.cfg.Get()
@@ -242,30 +284,30 @@ func (a *App) updateStatusBar(snap scheduler.Snapshot) {
 
 	switch snap.Phase {
 	case scheduler.PhasePaused:
-		a.status.SetBuiltinIcon(macos.StatusIconPaused)
-		a.status.UpdateItem(tagNextBreak, "Breaks paused")
-		a.status.SetItemHidden(tagPause, true)
-		a.status.SetItemHidden(tagResume, false)
+		status.SetBuiltinIcon(macos.StatusIconPaused)
+		status.UpdateItem(tagNextBreak, "Breaks paused")
+		status.SetItemHidden(tagPause, true)
+		status.SetItemHidden(tagResume, false)
 	case scheduler.PhaseAutoPaused:
-		a.status.SetBuiltinIcon(macos.StatusIconBusy)
+		status.SetBuiltinIcon(macos.StatusIconBusy)
 		// Auto-paused (busy detection). Show why so the user doesn't
 		// wonder why their break didn't fire.
 		label := snap.AutoPauseReason
 		if label == "" {
 			label = "busy"
 		}
-		a.status.UpdateItem(tagNextBreak, "Paused — "+label)
+		status.UpdateItem(tagNextBreak, "Paused — "+label)
 		// Allow manual pause/resume even while auto-paused; manual pause
 		// takes precedence and survives busy-clear.
-		a.status.SetItemHidden(tagPause, false)
-		a.status.SetItemHidden(tagResume, true)
+		status.SetItemHidden(tagPause, false)
+		status.SetItemHidden(tagResume, true)
 	case scheduler.PhaseOnBreak:
-		a.status.SetBuiltinIcon(macos.StatusIconBreak)
-		a.status.UpdateItem(tagNextBreak, "Break in progress")
-		a.status.SetItemHidden(tagPause, false)
-		a.status.SetItemHidden(tagResume, true)
+		status.SetBuiltinIcon(macos.StatusIconBreak)
+		status.UpdateItem(tagNextBreak, "Break in progress")
+		status.SetItemHidden(tagPause, false)
+		status.SetItemHidden(tagResume, true)
 	default:
-		a.status.SetBuiltinIcon(macos.StatusIconRunning)
+		status.SetBuiltinIcon(macos.StatusIconRunning)
 		left := time.Until(snap.NextBreakAt)
 		if left < 0 {
 			left = 0
@@ -274,9 +316,9 @@ func (a *App) updateStatusBar(snap scheduler.Snapshot) {
 		if snap.NextKind == scheduler.BreakLong {
 			kind = "Long"
 		}
-		a.status.UpdateItem(tagNextBreak, fmt.Sprintf("%s break in %s", kind, formatCountdown(left)))
-		a.status.SetItemHidden(tagPause, false)
-		a.status.SetItemHidden(tagResume, true)
+		status.UpdateItem(tagNextBreak, fmt.Sprintf("%s break in %s", kind, formatCountdown(left)))
+		status.SetItemHidden(tagPause, false)
+		status.SetItemHidden(tagResume, true)
 		if cfg.General.StatusBarTitle {
 			title = formatCountdown(left)
 		}
@@ -284,7 +326,7 @@ func (a *App) updateStatusBar(snap scheduler.Snapshot) {
 
 	// Only touch the title when it actually changed; this runs every second.
 	if title != a.lastBarTitle {
-		a.status.SetTitle(title)
+		status.SetTitle(title)
 		a.lastBarTitle = title
 	}
 }
@@ -424,7 +466,7 @@ func (a *App) handleSchedulerEvent(ev scheduler.Event, previousApp *string) {
 	case scheduler.EventBreakTick:
 		macos.UpdateOverlayTimer(formatTimer(ev.SecondsLeft))
 
-	case scheduler.EventBreakEnd, scheduler.EventSkipped, scheduler.EventNatural:
+	case scheduler.EventBreakEnd, scheduler.EventSkipped:
 		// Close every overlay and return focus to the previous app.
 		macos.CloseOverlays()
 
@@ -432,6 +474,26 @@ func (a *App) handleSchedulerEvent(ev scheduler.Event, previousApp *string) {
 		*previousApp = ""
 		slog.Info("break ended, restoring previous app", "name", prev)
 		macos.HideSelfAndActivate(prev)
+
+	case scheduler.EventNatural:
+		// A natural break is credited from idle time: no overlay was ever
+		// shown and no previous app is needed. Drop any app captured at the
+		// pre-break warning so a later break can't restore a stale one, and
+		// do NOT hide Pausa (that would make the dashboard vanish).
+		*previousApp = ""
+
+	case scheduler.EventReset:
+		// Reset can interrupt an on-screen break; dismiss overlays. Only
+		// restore focus when a break was actually active — the scheduler
+		// sets BreakKind on EventReset only then, so a reset during the
+		// warning window won't hide the dashboard.
+		macos.CloseOverlays()
+		prev := *previousApp
+		*previousApp = ""
+		if ev.BreakKind != "" && prev != "" {
+			slog.Info("schedule reset, restoring previous app", "name", prev)
+			macos.HideSelfAndActivate(prev)
+		}
 	}
 
 	// Always emit a typed event for the frontend.

@@ -1,6 +1,11 @@
-.PHONY: dev build frontend test clean release install-local
+.PHONY: dev build frontend test check seed-dist clean release install-local
 
 VERSION ?=
+
+# Go package patterns. We avoid `./...` because the frontend's npm
+# dependencies (notably flatted) ship Go source under frontend/node_modules
+# that is not part of this module.
+GO_PKGS := ./internal/... .
 
 dev:
 	wails dev
@@ -11,9 +16,20 @@ build:
 frontend:
 	cd frontend && npm run build
 
-test:
-	go vet ./...
-	go test -race ./...
+# The Go //go:embed directive requires frontend/dist to exist. Seed an empty
+# directory so backend checks work on a clean checkout (mirrors CI).
+seed-dist:
+	@mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+
+test: seed-dist
+	go vet $(GO_PKGS)
+	go test -race $(GO_PKGS)
+	go build $(GO_PKGS)
+
+check: test
+	GOOS=linux CGO_ENABLED=0 go build $(GO_PKGS)
+	cd frontend && npm run lint
+	cd frontend && npm run build
 
 clean:
 	go clean -cache

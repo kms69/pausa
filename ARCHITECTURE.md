@@ -10,9 +10,11 @@ the code; if you find a discrepancy, the code wins.
    the most important code in the repo.
 2. **One source of truth.** Time, configuration, and break state each have
    exactly one owner.
-3. **Native macOS, properly.** No AppleScript shell-outs, no polling for
-   menu clicks, real `UNUserNotificationCenter` notifications, real IOKit
-   idle detection.
+3. **Native macOS, properly.** Native AppKit /
+   `UNUserNotificationCenter` / IOKit for the core behavior. The only
+   shell-out is a conservative, 500 ms-timeout `osascript` URL lookup for the
+   frontmost browser used by busy detection — it runs on a background
+   goroutine, never the scheduler actor.
 4. **Frontend renders, doesn't compute.** The Vue side never owns the break
    countdown — it just displays the value the backend ticks every second.
 
@@ -20,7 +22,7 @@ the code; if you find a discrepancy, the code wins.
 
 ```
 pausa/
-├── main.go                          # ~100 LOC entrypoint
+├── main.go                          # ~140 LOC entrypoint
 ├── internal/
 │   ├── log/      logger.go          # slog → ~/Library/Logs/Pausa/pausa.log
 │   ├── clock/    clock.go           # Clock interface + System + FakeClock
@@ -30,7 +32,7 @@ pausa/
 │   ├── tips/     tips.go            # exercise-tip catalog
 │   ├── scheduler/state.go           # FSM types
 │   │             scheduler.go       # actor goroutine
-│   │             scheduler_test.go  # 17 tests w/ FakeClock
+│   │             scheduler_test.go  # 43 tests w/ FakeClock
 │   ├── macos/    bridge.h           # shared C declarations
 │   │             bridge.m           # AppKit / UN / IOKit
 │   │             cgo_darwin.go      # cgo flags
@@ -38,6 +40,7 @@ pausa/
 │   │              notifications,
 │   │              workspace,
 │   │              idle,
+│   │              busy,
 │   │              windows}_darwin.go
 │   │             stubs_other.go     # no-op stubs for !darwin
 │   └── breakapp/ app.go             # Wails-bound facade
@@ -83,6 +86,7 @@ single goroutine. The "actor pattern" makes mutexes unnecessary:
                  │      case <-breakTimer.C: …             │
                  │      case <-notifyTimer.C: …            │
                  │      case <-tickTimer.C: …              │
+                 │      case <-busyTimer.C: …              │
                  │      }                                  │
                  │  }                                      │
                  └─────────────────────────────────────────┘
@@ -142,8 +146,8 @@ at `interval` minutes after the threshold short break.
 ### `Clock` interface
 Production uses `clock.System`; tests use `clock.FakeClock` whose `Advance`
 method drives virtual time deterministically. Every timer the scheduler
-creates goes through this interface. Result: 17 scheduler tests run in
-~150ms with no `time.Sleep`s.
+creates goes through this interface. Result: 43 scheduler tests run in
+~1.5s with no `time.Sleep`s.
 
 ### Config: structured + validated
 `config.Config` is a tree of small structs (`ScheduleConfig`,
@@ -156,7 +160,7 @@ Runtime state (`is the user paused right now?`) lives only in scheduler
 memory, not in the config file. A crash mid-break can't strand the user in
 a paused state.
 
-### Native macOS bridge (no AppleScript)
+### Native macOS bridge (almost no AppleScript)
 - **Status bar**: `NSStatusItem` with menu items whose target is a Go
   callback exported via `//export pausaStatusBarClicked`. No polling.
 - **Notifications**: `UNUserNotificationCenter` with action buttons (Skip /
@@ -167,6 +171,11 @@ a paused state.
   `activateWithOptions:NSApplicationActivateIgnoringOtherApps`.
 - **Idle**: `CGEventSourceSecondsSinceLastEventType` (no polling required;
   IOKit caches it).
+- **Busy detection**: microphone (`CoreAudio`), Now Playing (MediaRemote),
+  output-device activity, and — only when a supported browser is frontmost —
+  a 500 ms-timeout `osascript` URL lookup. A background sampler goroutine
+  refreshes a cached reading every 2 s; `BusyState()` is a cheap getter so the
+  scheduler actor never blocks on IOKit or `osascript`.
 - **Multi-monitor overlays**: borderless `NSWindow` per non-primary
   `NSScreen` with a CAGradient background. The Wails main window handles the
   primary screen; overlays handle the rest.
@@ -187,25 +196,26 @@ callers can safely invoke them from any goroutine.
 ### Cross-platform stubs
 Every macOS bridge file has a `//go:build darwin` tag and a sibling
 `stubs_other.go` with `//go:build !darwin`. The rest of the codebase doesn't
-care; `GOOS=linux CGO_ENABLED=0 go build ./...` succeeds. The app won't
-*work* on Linux, but it compiles, which keeps CI fast and discourages
+care; `GOOS=linux CGO_ENABLED=0 go build ./internal/... .` succeeds. The app
+won't *work* on Linux, but it compiles, which keeps CI fast and discourages
 darwin-specific imports leaking outside `internal/macos`.
 
 ## Testing
 
 ```
-go test -race ./...        # 27 tests, ~1s
-go vet ./...               # zero issues
-GOOS=linux CGO_ENABLED=0 go build ./...  # cross-compile sanity
-npm --prefix frontend run build           # frontend type-check + bundle
+go test -race ./internal/... .   # 56 tests, ~2s
+go vet ./internal/... .          # zero issues
+GOOS=linux CGO_ENABLED=0 go build ./internal/... .  # cross-compile sanity
+npm --prefix frontend run lint            # frontend ESLint (flat/essential)
+npm --prefix frontend run build           # frontend bundle (vite build)
 ```
 
 Coverage by package:
 - `internal/clock` — 4 tests covering fake-clock semantics
-- `internal/config` — 6 tests: defaults, validation, atomic store, pub/sub,
+- `internal/config` — 9 tests: defaults, validation, atomic store, pub/sub,
   working-hours predicate
-- `internal/scheduler` — 17 tests: every transition, postpone, pause,
-  natural breaks, config changes mid-flight
+- `internal/scheduler` — 43 tests: every transition, postpone, pause,
+  natural breaks, working-hours deferral, config changes mid-flight
 
 The scheduler tests are the most valuable test suite in the project — they
 exercise every state transition without ever calling `time.Sleep`. If a
