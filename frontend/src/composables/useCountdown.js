@@ -25,7 +25,16 @@ export function useCountdown(targetIso) {
   }
 
   const stop  = () => { if (raf != null) { cancelAnimationFrame(raf); raf = null } }
-  const start = () => { stop(); if (targetIso.value) raf = requestAnimationFrame(tick) }
+  const start = () => {
+    stop()
+    if (targetIso.value) {
+      raf = requestAnimationFrame(tick)
+    } else {
+      // Clearing the target must also clear the displayed value; otherwise
+      // it keeps the last positive countdown.
+      seconds.value = 0
+    }
+  }
 
   watch(targetIso, () => {
     start()

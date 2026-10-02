@@ -227,7 +227,6 @@ func (b *BusySource) debouncedOutputActive(rawOutput bool) bool {
 
 func (b *BusySource) logChange(mic, nowPlaying, rawOutput, browserMedia bool, reason, browserHost string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	now := time.Now()
 	if b.havePrev &&
 		b.prevMic == mic &&
@@ -235,6 +234,7 @@ func (b *BusySource) logChange(mic, nowPlaying, rawOutput, browserMedia bool, re
 		b.prevOutput == rawOutput &&
 		b.prevBrowser == browserMedia &&
 		b.prevReason == reason {
+		b.mu.Unlock()
 		return
 	}
 	attrs := []any{
@@ -245,11 +245,9 @@ func (b *BusySource) logChange(mic, nowPlaying, rawOutput, browserMedia bool, re
 		"browserHost", browserHost,
 		"label", reason,
 	}
-	if b.havePrev {
+	hadPrev := b.havePrev
+	if hadPrev {
 		attrs = append(attrs, "prevHeldFor", now.Sub(b.prevSince).Round(time.Second).String())
-		slog.Info("busy state changed", attrs...)
-	} else {
-		slog.Info("busy state initial", attrs...)
 	}
 	b.havePrev = true
 	b.prevMic = mic
@@ -258,6 +256,15 @@ func (b *BusySource) logChange(mic, nowPlaying, rawOutput, browserMedia bool, re
 	b.prevBrowser = browserMedia
 	b.prevReason = reason
 	b.prevSince = now
+	b.mu.Unlock()
+
+	// Log outside the lock so a slow log sink can never stall BusyState()
+	// (and therefore the scheduler actor) on the cache lock.
+	if hadPrev {
+		slog.Info("busy state changed", attrs...)
+	} else {
+		slog.Info("busy state initial", attrs...)
+	}
 }
 
 // frontmostBrowserMediaCandidate returns (true, url) if the frontmost app is

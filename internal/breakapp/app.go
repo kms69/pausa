@@ -477,16 +477,20 @@ func (a *App) handleSchedulerEvent(ev scheduler.Event, previousApp *string) {
 
 	case scheduler.EventNatural:
 		// A natural break is credited from idle time: no overlay was ever
-		// shown and no previous app was captured, so there is nothing to
-		// close or restore. Hiding self here would make the dashboard
-		// window vanish for no reason.
+		// shown and no previous app is needed. Drop any app captured at the
+		// pre-break warning so a later break can't restore a stale one, and
+		// do NOT hide Pausa (that would make the dashboard vanish).
+		*previousApp = ""
 
 	case scheduler.EventReset:
-		// Reset can interrupt an on-screen break; dismiss overlays and only
-		// restore focus if we actually captured a previous app.
+		// Reset can interrupt an on-screen break; dismiss overlays. Only
+		// restore focus when a break was actually active — the scheduler
+		// sets BreakKind on EventReset only then, so a reset during the
+		// warning window won't hide the dashboard.
 		macos.CloseOverlays()
-		if prev := *previousApp; prev != "" {
-			*previousApp = ""
+		prev := *previousApp
+		*previousApp = ""
+		if ev.BreakKind != "" && prev != "" {
 			slog.Info("schedule reset, restoring previous app", "name", prev)
 			macos.HideSelfAndActivate(prev)
 		}

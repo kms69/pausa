@@ -403,6 +403,11 @@ func (*cmdResume) apply(s *Scheduler, st *actorState) {
 type cmdReset struct{}
 
 func (*cmdReset) apply(s *Scheduler, st *actorState) {
+	wasOnBreak := st.phase == PhaseOnBreak
+	var completed BreakKind
+	if wasOnBreak {
+		completed = st.currentKind
+	}
 	s.stopAllTimers(st)
 	clearAutoPause(st)
 	st.shortsCompleted = 0
@@ -412,9 +417,10 @@ func (*cmdReset) apply(s *Scheduler, st *actorState) {
 	st.manualPaused = false
 	st.phase = PhaseIdle
 	s.scheduleNext(st)
-	// Reset can interrupt an on-screen break; the event lets the shell
-	// dismiss overlays and refresh the UI.
-	s.publish(EventReset, st)
+	// Reset can interrupt an on-screen break. BreakKind is set on the event
+	// only when a break was in progress, so the shell can dismiss overlays
+	// and restore focus for that case alone.
+	s.publish(EventReset, st, withKind(completed))
 }
 
 // ---------- Internal helpers (run on actor goroutine only) ----------

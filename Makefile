@@ -1,4 +1,4 @@
-.PHONY: dev build frontend test check clean release install-local
+.PHONY: dev build frontend test check seed-dist clean release install-local
 
 VERSION ?=
 
@@ -16,7 +16,12 @@ build:
 frontend:
 	cd frontend && npm run build
 
-test:
+# The Go //go:embed directive requires frontend/dist to exist. Seed an empty
+# directory so backend checks work on a clean checkout (mirrors CI).
+seed-dist:
+	@mkdir -p frontend/dist && touch frontend/dist/.gitkeep
+
+test: seed-dist
 	go vet $(GO_PKGS)
 	go test -race $(GO_PKGS)
 	go build $(GO_PKGS)

@@ -326,6 +326,11 @@ pausa/
 
 **Backend:**
 
+> The Go `//go:embed` directive needs `frontend/dist` to exist. On a clean
+> checkout, build it first (`cd frontend && npm ci && npm run build`) or seed
+> an empty one: `mkdir -p frontend/dist && touch frontend/dist/.gitkeep`.
+> `make test` seeds it automatically.
+
 ```bash
 go build ./internal/... .
 go vet ./internal/... .

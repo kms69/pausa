@@ -965,10 +965,32 @@ func TestResetFromOnBreakEmitsResetEvent(t *testing.T) {
 	h.clearEvents()
 	h.sched.Reset()
 	h.drain()
-	if !h.hasKind(EventReset) {
-		t.Errorf("expected EventReset in %v", h.kinds())
+	var reset *Event
+	for i := range h.events {
+		if h.events[i].Kind == EventReset {
+			reset = &h.events[i]
+			break
+		}
+	}
+	if reset == nil {
+		t.Fatalf("expected EventReset in %v", h.kinds())
+	}
+	if reset.BreakKind != BreakShort {
+		t.Errorf("EventReset BreakKind=%q, want %q (interrupted break)", reset.BreakKind, BreakShort)
 	}
 	if got := h.sched.Snapshot().Phase; got != PhaseScheduled {
 		t.Errorf("phase=%s, want scheduled after reset", got)
+	}
+}
+
+func TestResetFromScheduledHasNoBreakKind(t *testing.T) {
+	h := newHarness(t)
+	h.clearEvents()
+	h.sched.Reset()
+	h.drain()
+	for _, e := range h.events {
+		if e.Kind == EventReset && e.BreakKind != "" {
+			t.Errorf("EventReset BreakKind=%q, want empty when not on break", e.BreakKind)
+		}
 	}
 }
