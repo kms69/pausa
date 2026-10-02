@@ -327,22 +327,26 @@ pausa/
 **Backend:**
 
 ```bash
-go build ./...
-go vet ./...
-go test -race ./...
+go build ./internal/... .
+go vet ./internal/... .
+go test -race ./internal/... .
 ```
+
+The explicit package list (instead of `./...`) keeps Go tooling out of
+`frontend/node_modules`, where some npm packages ship Go source.
 
 **Frontend:**
 
 ```bash
 cd frontend
+npm run lint
 npm run build
 ```
 
 **Cross-platform compile check:**
 
 ```bash
-GOOS=linux CGO_ENABLED=0 go build ./...
+GOOS=linux CGO_ENABLED=0 go build ./internal/... .
 ```
 
 Pausa is macOS-focused, but non-darwin stubs are maintained so cross-compilation continues to work.

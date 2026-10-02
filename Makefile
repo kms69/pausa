@@ -1,6 +1,11 @@
-.PHONY: dev build frontend test clean release install-local
+.PHONY: dev build frontend test check clean release install-local
 
 VERSION ?=
+
+# Go package patterns. We avoid `./...` because the frontend's npm
+# dependencies (notably flatted) ship Go source under frontend/node_modules
+# that is not part of this module.
+GO_PKGS := ./internal/... .
 
 dev:
 	wails dev
@@ -12,8 +17,14 @@ frontend:
 	cd frontend && npm run build
 
 test:
-	go vet ./...
-	go test -race ./...
+	go vet $(GO_PKGS)
+	go test -race $(GO_PKGS)
+	go build $(GO_PKGS)
+
+check: test
+	GOOS=linux CGO_ENABLED=0 go build $(GO_PKGS)
+	cd frontend && npm run lint
+	cd frontend && npm run build
 
 clean:
 	go clean -cache

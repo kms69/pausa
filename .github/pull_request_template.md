@@ -4,9 +4,9 @@
 
 ## Testing
 
-- [ ] `go build ./...`
-- [ ] `go test -race ./...`
-- [ ] `npm run build` (in `frontend/`)
+- [ ] `go build ./internal/... .`
+- [ ] `go test -race ./internal/... .`
+- [ ] `npm run lint && npm run build` (in `frontend/`)
 - [ ] manual macOS verification if native behavior changed
 
 ## Release impact
