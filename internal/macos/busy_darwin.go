@@ -69,6 +69,12 @@ type BusySource struct {
 	outputActiveSince time.Time
 	mediaDebounce     time.Duration
 
+	// cached reading served to BusyState(). Updated by the sampler
+	// goroutine so the expensive native/AppleScript detection never runs on
+	// a caller's goroutine (notably the scheduler actor).
+	cachedLabel string
+	cachedBusy  bool
+
 	// change-only logging latch
 	havePrev    bool
 	prevMic     bool
@@ -77,16 +83,67 @@ type BusySource struct {
 	prevBrowser bool
 	prevReason  string
 	prevSince   time.Time
+
+	// Background sampler lifecycle.
+	startOnce sync.Once
+	closeOnce sync.Once
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // DefaultMediaDebounce is the output-audio fallback debounce window.
 const DefaultMediaDebounce = 15 * time.Second
 
-// NewBusySource returns a configured BusySource.
+// busySampleInterval is how often the background sampler refreshes the
+// cached reading. It is shorter than the scheduler's BusyPollInterval so a
+// poll never sees a reading older than one poll interval.
+const busySampleInterval = 2 * time.Second
+
+// NewBusySource returns a configured BusySource and starts its background
+// sampler. Call Close to stop the sampler.
 func NewBusySource(mediaDebounce time.Duration) *BusySource {
 	bs := &BusySource{}
 	bs.SetMediaDebounce(mediaDebounce)
+	bs.start()
 	return bs
+}
+
+// start launches the background sampler exactly once.
+func (b *BusySource) start() {
+	b.startOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.cancel = cancel
+		b.done = make(chan struct{})
+		go b.loop(ctx)
+	})
+}
+
+// loop periodically samples busy signals on its own goroutine.
+func (b *BusySource) loop(ctx context.Context) {
+	defer close(b.done)
+	// Sample immediately so the first scheduler poll has data.
+	b.sample()
+	t := time.NewTicker(busySampleInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			b.sample()
+		}
+	}
+}
+
+// Close stops the background sampler. Safe to call multiple times and from
+// any goroutine.
+func (b *BusySource) Close() {
+	b.closeOnce.Do(func() {
+		if b.cancel != nil {
+			b.cancel()
+			<-b.done
+		}
+	})
 }
 
 // SetMediaDebounce updates the audio-output debounce duration. The browser
@@ -101,8 +158,18 @@ func (b *BusySource) SetMediaDebounce(d time.Duration) {
 	b.mu.Unlock()
 }
 
-// BusyState returns the current busy label and whether the user is busy.
+// BusyState returns the most recent sampled busy label and whether the user
+// is busy. It is a cheap, non-blocking read: the expensive native and
+// AppleScript detection happens on the sampler goroutine, so the scheduler
+// actor never stalls waiting on IOKit/osascript.
 func (b *BusySource) BusyState() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.cachedLabel, b.cachedBusy
+}
+
+// sample performs one detection pass and refreshes the cached reading.
+func (b *BusySource) sample() {
 	// Native detectors.
 	mic := C.pausa_busy_microphone_active() != 0
 	nowPlaying := C.pausa_busy_now_playing_active() != 0
@@ -136,10 +203,10 @@ func (b *BusySource) BusyState() (string, bool) {
 
 	b.logChange(mic, nowPlaying, rawOutput, browserMedia, reason, browserHost)
 
-	if !state.IsBusy() {
-		return "", false
-	}
-	return reason, true
+	b.mu.Lock()
+	b.cachedLabel = reason
+	b.cachedBusy = state.IsBusy()
+	b.mu.Unlock()
 }
 
 func (b *BusySource) debouncedOutputActive(rawOutput bool) bool {
@@ -259,7 +326,7 @@ func mediaURL(raw string) bool {
 	if err != nil {
 		return false
 	}
-	host := strings.ToLower(strings.TrimPrefix(u.Host, "www."))
+	host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 	path := strings.ToLower(u.Path)
 	switch host {
 	case "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "tv.youtube.com":
@@ -282,5 +349,5 @@ func hostOnly(raw string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(strings.TrimPrefix(u.Host, "www."))
+	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 }
