@@ -32,6 +32,23 @@ const safe = (name, fn) => async (...args) => {
   }
 }
 
+// Wails' EventsOff removes *every* listener for an event, so we keep our own
+// registry per event and expose a disposer that removes only its handler.
+const listeners = new Map() // event -> Set<handler>
+const subscribed = new Set()
+
+function dispatch(event, ...args) {
+  const set = listeners.get(event)
+  if (!set) return
+  for (const handler of [...set]) {
+    try {
+      handler(...args)
+    } catch (err) {
+      console.error(`api.on(${event}) handler failed:`, err)
+    }
+  }
+}
+
 export const api = {
   // Read
   getConfig:        safe('getConfig', GetConfig),
@@ -56,8 +73,29 @@ export const api = {
 
   // Events
   on(event, handler) {
-    EventsOn(event, handler)
-    return () => EventsOff(event)
+    let set = listeners.get(event)
+    if (!set) {
+      set = new Set()
+      listeners.set(event, set)
+    }
+    set.add(handler)
+    if (!subscribed.has(event)) {
+      subscribed.add(event)
+      EventsOn(event, (...args) => dispatch(event, ...args))
+    }
+    return () => {
+      const s = listeners.get(event)
+      if (!s) return
+      s.delete(handler)
+      if (s.size === 0) {
+        listeners.delete(event)
+        subscribed.delete(event)
+        EventsOff(event)
+      }
+    }
   },
-  off(event) { EventsOff(event) },
+  off(event) {
+    listeners.delete(event)
+    if (subscribed.delete(event)) EventsOff(event)
+  },
 }

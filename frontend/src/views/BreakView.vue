@@ -7,7 +7,7 @@
 // We never run our own countdown. The UI just renders what the store says.
 
 import { computed } from 'vue'
-import { state, accent, api } from '../lib/store'
+import { state, api } from '../lib/store'
 import { useShortcuts } from '../composables/useShortcuts'
 import BreakCountdown from '../components/BreakCountdown.vue'
 import BreathingGuide from '../components/BreathingGuide.vue'

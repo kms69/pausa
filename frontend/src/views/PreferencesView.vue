@@ -6,7 +6,7 @@
 // Settings are organized into focused sections, each its own component, so
 // adding a new section is a one-file change.
 
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { state, ui, saveConfig } from '../lib/store'
 import SectionSchedule from '../components/preferences/SectionSchedule.vue'
 import SectionNotifications from '../components/preferences/SectionNotifications.vue'
@@ -25,8 +25,12 @@ const tabs = [
 ]
 const tab = ref('schedule')
 
-// Deep-clone the live config so cancellations don't mutate it.
-const draft = reactive(JSON.parse(JSON.stringify(state.config || {})))
+// Deep-clone the live config so cancellations don't mutate it. The modal is
+// gated on `ready` because the native menu can open preferences before the
+// initial config has loaded; rendering sections with an empty draft would
+// dereference undefined paths and throw.
+const ready = computed(() => !!state.config)
+const draft = reactive(state.config ? JSON.parse(JSON.stringify(state.config)) : {})
 
 watch(() => state.config, (cfg) => {
   if (!cfg) return
@@ -40,7 +44,7 @@ const onSave = async () => {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="ui.closePreferences">
+  <div v-if="ready" class="modal-overlay" @click.self="ui.closePreferences">
     <div class="modal" role="dialog" aria-modal="true">
       <header class="modal__header">
         <h2 class="modal__title">Preferences</h2>

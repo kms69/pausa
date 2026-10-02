@@ -58,7 +58,7 @@ export async function init() {
     api.isFirstLaunch(),
   ])
   if (config) _state.config = config
-  if (snapshot) _state.snapshot = snapshot
+  applySnapshot(snapshot)
   _state.firstLaunch = !!firstLaunch
   _state.ready = true
 
@@ -78,7 +78,20 @@ export async function init() {
 }
 
 function onSchedulerHydrate(snap) {
-  if (snap) _state.snapshot = snap
+  applySnapshot(snap)
+}
+
+// applySnapshot accepts either a bare scheduler snapshot or the enriched
+// payload (which adds durationSeconds/tip/breakKind for an in-progress
+// break), and folds the break details into state.break.
+function applySnapshot(payload) {
+  if (!payload) return
+  _state.snapshot = payload.snapshot || payload
+  if (payload.durationSeconds != null) {
+    _state.break.durationSeconds = payload.durationSeconds
+    _state.break.secondsLeft = payload.durationSeconds
+  }
+  if (payload.tip) _state.break.tip = payload.tip
 }
 
 function onSchedulerEvent(ev) {
@@ -106,6 +119,10 @@ function onSchedulerEvent(ev) {
     case 'paused':
     case 'resumed':
     case 'postponed':
+      _state.notification = null
+      break
+    case 'reset':
+      _state.break.secondsLeft = 0
       _state.notification = null
       break
   }
