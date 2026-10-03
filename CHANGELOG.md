@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/yuseferi/pausa/compare/v1.1.0...v1.2.0) (2026-10-03)
+
+### Features
+
+* add media-counts-as-activity idle toggle ([#12](https://github.com/yuseferi/pausa/issues/12)) ([ae9d2ae](https://github.com/yuseferi/pausa/commit/ae9d2aec1bc54598cfb20743f9b30a3d089c8aa1))
+
 ## [1.1.0](https://github.com/yuseferi/pausa/compare/v1.0.5...v1.1.0) (2026-10-03)
 
 ### Features
