@@ -1,3 +1,13 @@
+## [1.1.0](https://github.com/yuseferi/pausa/compare/v1.0.5...v1.1.0) (2026-10-03)
+
+### Features
+
+* add reset schedule button to dashboard and menu bar ([#9](https://github.com/yuseferi/pausa/issues/9)) ([4593c19](https://github.com/yuseferi/pausa/commit/4593c191c0a7d82256911fe6f89f61ae98ab4cb0))
+
+### Bug Fixes
+
+* don't count media playback as idle rest ([#10](https://github.com/yuseferi/pausa/issues/10)) ([2d897dd](https://github.com/yuseferi/pausa/commit/2d897dd4d0449ef1215fffcb708013f99cbb5545))
+
 ## [1.0.5](https://github.com/yuseferi/pausa/compare/v1.0.4...v1.0.5) (2026-10-02)
 
 ### Bug Fixes
