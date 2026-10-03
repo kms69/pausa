@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/yuseferi/pausa/compare/v1.2.0...v1.3.0) (2026-10-03)
+
+### Features
+
+* add manual check-for-updates ([#11](https://github.com/yuseferi/pausa/issues/11)) ([06c2bb7](https://github.com/yuseferi/pausa/commit/06c2bb751111860811952f4884da0f8b43017149))
+
 ## [1.2.0](https://github.com/yuseferi/pausa/compare/v1.1.0...v1.2.0) (2026-10-03)
 
 ### Features
